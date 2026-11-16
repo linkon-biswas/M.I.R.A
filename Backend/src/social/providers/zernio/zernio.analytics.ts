@@ -8,6 +8,8 @@ import {
   AnalyticsOverviewFilter,
   ReactionBreakdown,
   NormalizedPostMetrics,
+  NormalizedPlatformMetric,
+  EngagementActivityItem,
 } from '../../types/analytics.types';
 
 export function calculateEngagementRate(metrics: {
@@ -270,6 +272,89 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
       timeline = [];
     }
 
+    // Build platformBreakdown: map each platform entry from raw Zernio data.
+    // Zernio currently provides aggregate metrics only, so the matched platform
+    // gets the real metrics; all others (across the standard 6 channels) are
+    // marked as 'not_targeted' with zero metrics when they are not referenced.
+    const ALL_KNOWN_PLATFORMS = ['facebook', 'instagram', 'tiktok', 'youtube', 'x', 'linkedin'];
+
+    const rawPlatforms: any[] = Array.isArray(foundPost.platforms)
+      ? foundPost.platforms
+      : [];
+
+    const zeroMetrics: NormalizedPostMetrics = {
+      impressions: 0, reach: 0, likes: 0, comments: 0,
+      shares: 0, saves: 0, clicks: 0, views: 0, engagementRate: 0,
+    };
+
+    // Determine which platforms the post actually targets from the Zernio raw data.
+    const targetedPlatformNames: string[] = rawPlatforms.length > 0
+      ? rawPlatforms.map((pl: any) => (pl.platform || platform).toLowerCase())
+      : [platform.toLowerCase()];
+
+    const platformBreakdown: NormalizedPlatformMetric[] = ALL_KNOWN_PLATFORMS.map((pl) => {
+      const isTargeted = targetedPlatformNames.includes(pl.toLowerCase());
+      if (isTargeted) {
+        // Find the raw platform entry if it exists.
+        const rawPl = rawPlatforms.find((r: any) =>
+          (r.platform || '').toLowerCase() === pl.toLowerCase()
+        );
+        return {
+          platform: pl,
+          status: 'published' as const,
+          platformPostId: rawPl?.platformPostId || platformPostId,
+          platformPostUrl: rawPl?.platformPostUrl || foundPost.platformPostUrl,
+          metrics, // use aggregate metrics for the active platform
+        };
+      }
+      return {
+        platform: pl,
+        status: 'not_targeted' as const,
+        metrics: zeroMetrics,
+      };
+    });
+
+    // Build engagementActivity from raw Zernio data when available.
+    // Map action types to human-readable labels.
+    const reactionLabelMap: Record<string, string> = {
+      like: '👍 Like', love: '❤️ Love', haha: '😆 Haha',
+      wow: '😮 Wow', sad: '😢 Sad', angry: '😡 Angry',
+      comment: '💬 Comment', click: '🖱️ Click', share: '🔁 Share',
+    };
+
+    const rawActivity: any[] = [
+      ...(Array.isArray(foundPost.comments) ? foundPost.comments : []),
+      ...(Array.isArray(foundPost.reactions) ? foundPost.reactions : []),
+      ...(Array.isArray(foundPost.engagements) ? foundPost.engagements : []),
+      ...(Array.isArray(foundPost.activity) ? foundPost.activity : []),
+    ];
+
+    const engagementActivity: EngagementActivityItem[] = Array.isArray(rawActivity)
+      ? rawActivity.map((item: any, idx: number) => {
+        const rawActionType = (
+          item.type || item.reactionType || item.actionType || 'like'
+        ).toLowerCase();
+        const actionType = (
+          ['like', 'love', 'haha', 'wow', 'sad', 'angry', 'comment', 'click', 'share']
+            .includes(rawActionType)
+            ? rawActionType
+            : 'like'
+        ) as EngagementActivityItem['actionType'];
+        const hasActorName = !!(item.actorName || item.userName || item.name);
+        return {
+          id: item.id || `activity_${idx}`,
+          actorName: item.actorName || item.userName || item.name || 'Facebook Page Audience (Verified Interaction)',
+          actorType: (hasActorName ? 'user' : 'audience_snapshot') as EngagementActivityItem['actorType'],
+          platform,
+          actionType,
+          reactionLabel: reactionLabelMap[actionType] || '👍 Like',
+          commentText: item.message || item.commentText,
+          timestamp: item.timestamp || item.createdAt || new Date().toISOString(),
+          isAggregatedPrivacyFallback: !hasActorName,
+        };
+      })
+      : [];
+
     return {
       postId:
         foundPost._id ||
@@ -286,6 +371,10 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
       reactionBreakdown,
 
       timeline,
+
+      platformBreakdown,
+
+      engagementActivity,
 
       fetchedAt: new Date().toISOString(),
     };

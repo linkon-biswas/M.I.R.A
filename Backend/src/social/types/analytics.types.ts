@@ -32,6 +32,26 @@ export interface NormalizedTimelinePoint {
   engagementRate: number;
 }
 
+export interface NormalizedPlatformMetric {
+  platform: string;
+  status: 'published' | 'not_targeted' | 'failed' | 'scheduled';
+  platformPostId?: string;
+  platformPostUrl?: string;
+  metrics: NormalizedPostMetrics;
+}
+
+export interface EngagementActivityItem {
+  id: string;
+  actorName: string;
+  actorType: 'user' | 'audience_snapshot';
+  platform: string;
+  actionType: 'like' | 'love' | 'haha' | 'wow' | 'sad' | 'angry' | 'comment' | 'click' | 'share';
+  reactionLabel: string;
+  commentText?: string;
+  timestamp: string;
+  isAggregatedPrivacyFallback?: boolean;
+}
+
 export interface NormalizedPostAnalytics {
   postId: string;
   platform: string;
@@ -40,6 +60,8 @@ export interface NormalizedPostAnalytics {
   reactionBreakdown: ReactionBreakdown | null;
   timeline: NormalizedTimelinePoint[];
   fetchedAt: string;
+  platformBreakdown?: NormalizedPlatformMetric[];
+  engagementActivity?: EngagementActivityItem[];
 }
 
 export interface AnalyticsOverviewFilter {

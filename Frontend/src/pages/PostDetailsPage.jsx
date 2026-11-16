@@ -13,9 +13,16 @@ import {
   Users, 
   TrendingUp,
   Image as ImageIcon,
-  RefreshCw
+  RefreshCw,
+  Award,
+  Info,
+  Smile,
+  Globe,
+  Layers,
+  Filter,
+  CheckCircle2
 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { apiService } from '../services/api';
 import StatCard from '../components/StatCard';
 import StatusBadge from '../components/StatusBadge';
@@ -32,6 +39,10 @@ export default function PostDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+
+  const [comparisonMetric, setComparisonMetric] = useState('reach');
+  const [showAllPlatforms, setShowAllPlatforms] = useState(true);
+  const [activityFilter, setActivityFilter] = useState('all');
 
   const loadPostData = async (forceRefresh = false) => {
     if (forceRefresh) {
@@ -262,6 +273,373 @@ export default function PostDetailsPage() {
           />
         )}
       </div>
+
+      {/* Feature 1: Cross-Platform Performance Comparison Dashboard & Graph */}
+      {(() => {
+        const ALL_CHANNELS = [
+          { id: 'facebook', label: 'Facebook', color: '#1877F2', bg: 'bg-blue-600/10', border: 'border-blue-500/30', text: 'text-blue-400' },
+          { id: 'instagram', label: 'Instagram', color: '#E4405F', bg: 'bg-pink-600/10', border: 'border-pink-500/30', text: 'text-pink-400' },
+          { id: 'tiktok', label: 'TikTok', color: '#00F2FE', bg: 'bg-cyan-600/10', border: 'border-cyan-500/30', text: 'text-cyan-400' },
+          { id: 'youtube', label: 'YouTube', color: '#FF0000', bg: 'bg-red-600/10', border: 'border-red-500/30', text: 'text-red-400' },
+          { id: 'x', label: 'X (Twitter)', color: '#38bdf8', bg: 'bg-sky-600/10', border: 'border-sky-500/30', text: 'text-sky-400' },
+          { id: 'linkedin', label: 'LinkedIn', color: '#0A66C2', bg: 'bg-indigo-600/10', border: 'border-indigo-500/30', text: 'text-indigo-400' },
+        ];
+
+        const platformComparisonData = ALL_CHANNELS.map((ch) => {
+          const breakdown = analytics?.platformBreakdown?.find(
+            (b) => b.platform.toLowerCase() === ch.id.toLowerCase()
+          );
+          const localPlatform = post?.platforms?.find(
+            (p) => p.platform?.toLowerCase() === ch.id.toLowerCase()
+          );
+          const isTargeted = breakdown
+            ? breakdown.status !== 'not_targeted'
+            : Boolean(localPlatform);
+
+          const plMetrics = breakdown?.metrics || (isTargeted ? metrics : {
+            impressions: 0, reach: 0, likes: 0, comments: 0, shares: 0, saves: 0, clicks: 0, views: 0, engagementRate: 0,
+          });
+
+          return {
+            id: ch.id,
+            label: ch.label,
+            color: ch.color,
+            bg: ch.bg,
+            border: ch.border,
+            text: ch.text,
+            status: isTargeted ? 'published' : 'not_targeted',
+            platformPostId: breakdown?.platformPostId || localPlatform?.platformPostId,
+            platformPostUrl: breakdown?.platformPostUrl || localPlatform?.platformPostUrl,
+            reach: plMetrics.reach || 0,
+            impressions: plMetrics.impressions || 0,
+            likes: plMetrics.likes || 0,
+            comments: plMetrics.comments || 0,
+            shares: plMetrics.shares || 0,
+            clicks: plMetrics.clicks || 0,
+            engagementRate: plMetrics.engagementRate || 0,
+          };
+        });
+
+        const displayedPlatforms = showAllPlatforms
+          ? platformComparisonData
+          : platformComparisonData.filter((p) => p.status === 'published');
+
+        const publishedChannels = platformComparisonData.filter((p) => p.status === 'published');
+        const topPerformer = publishedChannels.length > 0
+          ? publishedChannels.reduce((max, cur) => cur[comparisonMetric] > max[comparisonMetric] ? cur : max, publishedChannels[0])
+          : null;
+
+        const metricTabs = [
+          { id: 'reach', label: 'Reach' },
+          { id: 'impressions', label: 'Impressions' },
+          { id: 'likes', label: 'Likes' },
+          { id: 'engagementRate', label: 'Engagement Rate (%)' },
+          { id: 'comments', label: 'Comments' },
+          { id: 'shares', label: 'Shares' },
+          { id: 'clicks', label: 'Clicks' },
+        ];
+
+        return (
+          <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-6">
+            {/* Header + Badges + Toggle */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-semibold text-slate-100 flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-blue-400" />
+                  Cross-Platform Performance Comparison
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Side-by-side metric comparison across all major social media channels for this post
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Best Performing Platform Badge */}
+                {topPerformer && topPerformer[comparisonMetric] > 0 && (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-medium">
+                    <Award className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Top Performer: <strong className="text-amber-200">{topPerformer.label}</strong> ({topPerformer[comparisonMetric]}{comparisonMetric === 'engagementRate' ? '%' : ''})</span>
+                  </div>
+                )}
+
+                {/* Toggle All vs Targeted */}
+                <button
+                  type="button"
+                  onClick={() => setShowAllPlatforms(!showAllPlatforms)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+                >
+                  <Layers className="w-3.5 h-3.5 text-blue-400" />
+                  {showAllPlatforms ? 'Showing All 6 Channels' : 'Targeted Channels Only'}
+                </button>
+              </div>
+            </div>
+
+            {/* Metric Selector Tabs */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+              <span className="text-xs font-medium text-slate-400 mr-1">Compare by:</span>
+              {metricTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setComparisonMetric(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    comparisonMetric === tab.id
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Recharts Bar Chart */}
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={displayedPlatforms} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                  <XAxis dataKey="label" stroke="#94a3b8" fontSize={12} />
+                  <YAxis stroke="#94a3b8" fontSize={12} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '12px' }}
+                    formatter={(val, name, item) => [
+                      `${val}${comparisonMetric === 'engagementRate' ? '%' : ''} (${item.payload.status === 'published' ? 'Live' : 'Not Targeted'})`,
+                      metricTabs.find((m) => m.id === comparisonMetric)?.label || comparisonMetric
+                    ]}
+                  />
+                  <Bar dataKey={comparisonMetric} radius={[8, 8, 0, 0]}>
+                    {displayedPlatforms.map((entry) => (
+                      <Cell
+                        key={`cell-${entry.id}`}
+                        fill={entry.status === 'published' ? entry.color : '#475569'}
+                        opacity={entry.status === 'published' ? 0.9 : 0.3}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Platform Comparison Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
+              {displayedPlatforms.map((pl) => (
+                <div
+                  key={pl.id}
+                  className={`p-4 rounded-xl border transition-all ${
+                    pl.status === 'published'
+                      ? 'bg-slate-900/60 border-slate-700/80 shadow-sm'
+                      : 'bg-slate-900/20 border-slate-800/60 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pl.color }} />
+                      {pl.label}
+                    </span>
+                    <span
+                      className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
+                        pl.status === 'published'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {pl.status === 'published' ? 'Active Target' : 'Not Targeted'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="p-2 rounded-lg bg-slate-800/40 border border-slate-800">
+                      <span className="text-slate-400 block text-[10px]">Reach</span>
+                      <span className="font-semibold text-slate-200">{pl.reach}</span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-slate-800/40 border border-slate-800">
+                      <span className="text-slate-400 block text-[10px]">Likes</span>
+                      <span className="font-semibold text-emerald-400">{pl.likes}</span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-slate-800/40 border border-slate-800">
+                      <span className="text-slate-400 block text-[10px]">Eng. Rate</span>
+                      <span className="font-semibold text-amber-400">{pl.engagementRate}%</span>
+                    </div>
+                  </div>
+
+                  {pl.platformPostUrl && (
+                    <div className="mt-3 pt-2 border-t border-slate-800 flex justify-end">
+                      <a
+                        href={pl.platformPostUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        View Platform Post <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Feature 2: Reaction Breakdown & Engagement Activity Log */}
+      {(() => {
+        const reactions = [
+          { key: 'like', emoji: '👍', label: 'Like', count: analytics?.reactionBreakdown?.like ?? metrics.likes },
+          { key: 'love', emoji: '❤️', label: 'Love', count: analytics?.reactionBreakdown?.love ?? 0 },
+          { key: 'haha', emoji: '😆', label: 'Haha', count: analytics?.reactionBreakdown?.haha ?? 0 },
+          { key: 'wow', emoji: '😮', label: 'Wow', count: analytics?.reactionBreakdown?.wow ?? 0 },
+          { key: 'sad', emoji: '😢', label: 'Sad', count: analytics?.reactionBreakdown?.sad ?? 0 },
+          { key: 'angry', emoji: '😡', label: 'Angry', count: analytics?.reactionBreakdown?.angry ?? 0 },
+        ];
+        const totalReactions = reactions.reduce((sum, r) => sum + r.count, 0);
+
+        const activities = analytics?.engagementActivity || [];
+        const filteredActivities = activities.filter((item) => {
+          if (activityFilter === 'reactions') return item.actionType !== 'comment';
+          if (activityFilter === 'comments') return item.actionType === 'comment';
+          return true;
+        });
+
+        return (
+          <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-6">
+            {/* Section Header */}
+            <div>
+              <h3 className="text-base font-semibold text-slate-100 flex items-center gap-2">
+                <Heart className="w-4 h-4 text-rose-400" />
+                Reactions & Audience Engagement Activity
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Audience reactions, interactions, and chronological activity feed for this post
+              </p>
+            </div>
+
+            {/* Reaction Type Breakdown Pills */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span className="font-medium">Reaction Breakdown</span>
+                <span>Total Reactions: <strong className="text-slate-200">{totalReactions}</strong></span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                {reactions.map((r) => (
+                  <div
+                    key={r.key}
+                    className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-1.5 text-sm">
+                      <span>{r.emoji}</span>
+                      <span className="text-xs font-medium text-slate-300">{r.label}</span>
+                    </span>
+                    <span className="text-xs font-bold text-slate-100 font-mono">
+                      {r.count}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Privacy Disclaimer Banner */}
+            <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-start gap-3">
+              <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold text-blue-200">Meta Privacy Protection Notice: </span>
+                <span className="text-blue-300/80">
+                  Meta's Graph API aggregates interaction data to protect user privacy. Individual reactor names require additional Facebook Page permissions (Page Inbox or Comments API).
+                </span>
+              </div>
+            </div>
+
+            {/* Chronological Engagement Activity Log */}
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <Filter className="w-3.5 h-3.5 text-blue-400" />
+                  Activity Stream ({filteredActivities.length})
+                </h4>
+
+                {/* Filter Tabs */}
+                <div className="flex items-center gap-1.5">
+                  {[
+                    { id: 'all', label: `All (${activities.length})` },
+                    { id: 'reactions', label: `Reactions (${activities.filter((a) => a.actionType !== 'comment').length})` },
+                    { id: 'comments', label: `Comments (${activities.filter((a) => a.actionType === 'comment').length})` },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setActivityFilter(f.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        activityFilter === f.id
+                          ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30 font-semibold'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredActivities.length > 0 ? (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {filteredActivities.map((act) => (
+                    <div
+                      key={act.id}
+                      className="p-3 rounded-xl bg-slate-900/40 border border-slate-800 flex items-start justify-between gap-3 hover:border-slate-700 transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        {/* Avatar */}
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                          {act.actorName
+                            .split(' ')
+                            .map((n) => n[0])
+                            .slice(0, 2)
+                            .join('')
+                            .toUpperCase()}
+                        </div>
+
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-200">
+                              {act.actorName}
+                            </span>
+                            {act.isAggregatedPrivacyFallback && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                                Verified Audience
+                              </span>
+                            )}
+                            <span className="text-[11px] font-semibold text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20">
+                              {act.reactionLabel || act.actionType}
+                            </span>
+                          </div>
+
+                          {act.commentText && (
+                            <p className="text-xs text-slate-300 mt-1 italic bg-slate-950/40 p-2 rounded-lg border border-slate-800/80">
+                              "{act.commentText}"
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                          {act.platform}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {formatDate(act.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 rounded-xl bg-slate-900/20 border border-slate-800 text-slate-500 text-xs">
+                  No engagement activity items found for the selected filter.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

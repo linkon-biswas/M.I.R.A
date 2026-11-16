@@ -181,6 +181,73 @@ describe('Analytics Layer Unit & Integration Tests', () => {
       expect(overview.likes).toBe(200);
       expect(overview.engagementRate).toBeGreaterThan(0);
     });
+
+    test('getPostAnalytics builds platformBreakdown and engagementActivity from raw Zernio data', async () => {
+      mockZernioClient.getAnalytics.mockResolvedValueOnce({
+        posts: [
+          {
+            _id: 'zernio_post_breakdown_1',
+            platform: 'facebook',
+            platforms: [
+              { platform: 'facebook', platformPostId: 'fb_act_123', status: 'published' },
+              { platform: 'instagram', platformPostId: 'ig_act_123', status: 'published' },
+            ],
+            analytics: {
+              impressions: 1200,
+              reach: 900,
+              likes: 45,
+              comments: 8,
+              shares: 3,
+              saves: 1,
+              clicks: 12,
+              views: 0,
+            },
+            comments: [
+              {
+                id: 'c_1',
+                userName: 'Sarah Jenkins',
+                type: 'comment',
+                message: 'Great campaign!',
+                createdAt: '2026-11-15T10:00:00.000Z',
+              },
+            ],
+            reactions: [
+              {
+                id: 'r_1',
+                actorName: 'Alex Rivera',
+                reactionType: 'love',
+                createdAt: '2026-11-15T11:00:00.000Z',
+              },
+            ],
+          },
+        ],
+      });
+
+      mockZernioClient.getPostTimeline.mockResolvedValueOnce({ timeline: [] });
+
+      const result = await provider.getPostAnalytics('zernio_post_breakdown_1');
+
+      expect(result).not.toBeNull();
+      expect(result?.platformBreakdown).toBeDefined();
+      expect(result?.platformBreakdown?.length).toBe(6);
+
+      const fb = result?.platformBreakdown?.find((p) => p.platform === 'facebook');
+      const ig = result?.platformBreakdown?.find((p) => p.platform === 'instagram');
+      const x = result?.platformBreakdown?.find((p) => p.platform === 'x');
+
+      expect(fb?.status).toBe('published');
+      expect(ig?.status).toBe('published');
+      expect(x?.status).toBe('not_targeted');
+
+      expect(result?.engagementActivity).toBeDefined();
+      expect(result?.engagementActivity?.length).toBe(2);
+      expect(result?.engagementActivity?.[0].actorName).toBe('Sarah Jenkins');
+      expect(result?.engagementActivity?.[0].actorType).toBe('user');
+      expect(result?.engagementActivity?.[0].actionType).toBe('comment');
+      expect(result?.engagementActivity?.[1].actorName).toBe('Alex Rivera');
+      expect(result?.engagementActivity?.[1].actorType).toBe('user');
+      expect(result?.engagementActivity?.[1].actionType).toBe('love');
+    });
   });
 
   describe('AnalyticsService & Caching', () => {
@@ -323,6 +390,53 @@ describe('Analytics Layer Unit & Integration Tests', () => {
       expect(res3.timeline).toEqual(populatedTimeline);
       expect(mockProvider.getPostTimeline).toHaveBeenCalledTimes(2);
     });
+
+    test('getPostAnalytics merges localPost platforms into platformBreakdown and generates synthetic engagementActivity from timeline', async () => {
+      postRepo.save({
+        internalPostId: 'post_multi_platform_1',
+        idempotencyKey: 'req_mp_1',
+        publishNow: true,
+        platforms: [
+          { platform: 'facebook', status: 'published', platformPostId: 'fb_p_1' },
+          { platform: 'instagram', status: 'published', platformPostId: 'ig_p_1' },
+        ],
+        caption: 'Multi-platform campaign post',
+        status: 'published',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      mockProvider.getPostAnalytics.mockResolvedValueOnce({
+        postId: 'post_multi_platform_1',
+        platform: 'facebook',
+        platformPostId: 'fb_p_1',
+        metrics: { impressions: 1000, reach: 800, likes: 25, comments: 4, shares: 2, saves: 1, clicks: 10, views: 0, engagementRate: 4.1 },
+        reactionBreakdown: null,
+        timeline: [
+          { date: '2026-11-10', impressions: 500, reach: 400, likes: 10, comments: 1, shares: 0, saves: 0, clicks: 5, views: 0, engagementRate: 3.2 },
+          { date: '2026-11-11', impressions: 1000, reach: 800, likes: 25, comments: 4, shares: 2, saves: 1, clicks: 10, views: 0, engagementRate: 4.1 },
+        ],
+        fetchedAt: new Date().toISOString(),
+      });
+
+      const res = await service.getPostAnalytics('post_multi_platform_1');
+
+      expect(res.platformBreakdown).toBeDefined();
+      expect(Array.isArray(res.platformBreakdown)).toBe(true);
+
+      const fb = res.platformBreakdown.find((p: any) => p.platform === 'facebook');
+      const ig = res.platformBreakdown.find((p: any) => p.platform === 'instagram');
+      const tiktok = res.platformBreakdown.find((p: any) => p.platform === 'tiktok');
+
+      expect(fb?.status).toBe('published');
+      expect(ig?.status).toBe('published');
+      expect(tiktok?.status).toBe('not_targeted');
+
+      expect(res.engagementActivity).toBeDefined();
+      expect(res.engagementActivity.length).toBeGreaterThan(0);
+      expect(res.engagementActivity[0].actorName).toBe('Facebook Page Audience (Verified Interaction)');
+      expect(res.engagementActivity[0].isAggregatedPrivacyFallback).toBe(true);
+    });
   });
 
   describe('API Endpoints (supertest)', () => {
@@ -462,6 +576,42 @@ describe('Analytics Layer Unit & Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(mockAnalyticsService.getPostTimeline).toHaveBeenCalledWith('p_refresh_test', true);
+    });
+
+    test('GET /api/social/analytics/:postId returns platformBreakdown and engagementActivity in response', async () => {
+      mockAnalyticsService.getPostAnalytics.mockResolvedValueOnce({
+        postId: 'p_breakdown_test',
+        platform: 'facebook',
+        metrics: { impressions: 100, reach: 90, likes: 10, comments: 2, shares: 1, saves: 0, clicks: 5, views: 0, engagementRate: 20 },
+        reactionBreakdown: { like: 8, love: 2, haha: 0, wow: 0, sad: 0, angry: 0 },
+        timeline: [],
+        platformBreakdown: [
+          { platform: 'facebook', status: 'published', metrics: { impressions: 100, reach: 90, likes: 10, comments: 2, shares: 1, saves: 0, clicks: 5, views: 0, engagementRate: 20 } },
+          { platform: 'instagram', status: 'not_targeted', metrics: { impressions: 0, reach: 0, likes: 0, comments: 0, shares: 0, saves: 0, clicks: 0, views: 0, engagementRate: 0 } },
+        ],
+        engagementActivity: [
+          {
+            id: 'act_1',
+            actorName: 'Facebook Page Audience (Verified Interaction)',
+            actorType: 'audience_snapshot',
+            platform: 'facebook',
+            actionType: 'like',
+            reactionLabel: '👍 Like',
+            timestamp: '2026-11-15T10:00:00.000Z',
+            isAggregatedPrivacyFallback: true,
+          },
+        ],
+      });
+
+      const res = await request(app).get('/api/social/analytics/p_breakdown_test');
+
+      expect(res.status).toBe(200);
+      expect(res.body.platformBreakdown).toBeDefined();
+      expect(res.body.platformBreakdown.length).toBe(2);
+      expect(res.body.platformBreakdown[0].platform).toBe('facebook');
+      expect(res.body.engagementActivity).toBeDefined();
+      expect(res.body.engagementActivity.length).toBe(1);
+      expect(res.body.engagementActivity[0].actionType).toBe('like');
     });
   });
 });
