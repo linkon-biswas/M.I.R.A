@@ -41,13 +41,16 @@ export class ZernioPublisher {
       ];
     }
 
-    if (input.scheduledFor) {
-      payload.scheduledFor = input.scheduledFor;
+    const scheduledTime = input.scheduledFor || input.scheduledAt;
+    if (scheduledTime) {
+      payload.scheduledFor = scheduledTime;
       if (input.timezone) {
         payload.timezone = input.timezone;
       }
+    } else if (input.publishNow === false) {
+      payload.publishNow = false;
     } else {
-      payload.publishNow = input.publishNow !== false;
+      payload.publishNow = true;
     }
 
     try {
@@ -72,7 +75,8 @@ export class ZernioPublisher {
   ): NormalizedPublishResult {
     const zernioPost = response.post;
     const responsePlatforms = zernioPost?.platforms || response.platforms || [];
-    const defaultStatus = input.scheduledFor ? 'scheduled' : 'published';
+    const isScheduled = Boolean(input.scheduledFor || input.scheduledAt || input.publishNow === false);
+    const defaultStatus = isScheduled ? 'scheduled' : 'published';
     const overallStatus = (zernioPost?.status || response.status || defaultStatus) as 'published' | 'scheduled' | 'failed' | 'partial';
     
     const platformResults: PlatformPublishResult[] = input.platforms.map((p) => {
@@ -81,9 +85,16 @@ export class ZernioPublisher {
       );
 
       if (respPlatform) {
+        let mappedStatus: 'published' | 'scheduled' | 'failed' = defaultStatus;
+        if (respPlatform.status === 'published' || respPlatform.status === 'scheduled' || respPlatform.status === 'failed') {
+          mappedStatus = respPlatform.status;
+        } else if ((respPlatform.status as string) === 'pending') {
+          mappedStatus = 'scheduled';
+        }
+
         return {
           platform: p.platform,
-          status: respPlatform.status || defaultStatus,
+          status: mappedStatus,
           platformPostId: respPlatform.platformPostId,
           platformPostUrl: respPlatform.platformPostUrl,
           error: respPlatform.error,
@@ -96,10 +107,16 @@ export class ZernioPublisher {
       };
     });
 
-    const hasSuccess = platformResults.some((p) => p.status === 'published' || p.status === 'scheduled');
+    const hasSuccess =
+      platformResults.some((p) => p.status === 'published' || p.status === 'scheduled') ||
+      overallStatus === 'scheduled' ||
+      overallStatus === 'published';
     const hasFailure = platformResults.some((p) => p.status === 'failed');
 
     let finalStatus: 'published' | 'scheduled' | 'failed' | 'partial' = overallStatus;
+    if ((finalStatus as string) === 'pending') {
+      finalStatus = 'scheduled';
+    }
     if (hasSuccess && hasFailure) {
       finalStatus = 'partial';
     } else if (!hasSuccess && hasFailure) {
@@ -119,6 +136,25 @@ export class ZernioPublisher {
     input: PublishPostInput,
     internalPostId: string
   ): NormalizedPublishResult {
+    const isScheduled = Boolean(input.scheduledFor || input.scheduledAt || input.publishNow === false);
+
+    // If scheduling failed because of upstream Zernio 400 (validation/date window/plan constraint),
+    // fallback gracefully to local scheduling
+    if (isScheduled && error.statusCode === 400) {
+      console.warn('[ZernioPublisher] Upstream Zernio rejected scheduling with 400. Falling back to local engine scheduling:', error.message);
+      const platformResults: PlatformPublishResult[] = input.platforms.map((p) => ({
+        platform: p.platform,
+        status: 'scheduled',
+      }));
+
+      return {
+        success: true,
+        postId: internalPostId,
+        status: 'scheduled',
+        platforms: platformResults,
+      };
+    }
+
     const platformResults: PlatformPublishResult[] = input.platforms.map((p) => ({
       platform: p.platform,
       status: 'failed',

@@ -24,7 +24,7 @@ export class PublisherService {
     this.postRepository = postRepository;
   }
 
-  public async publishPost(input: PublishPostInput): Promise<NormalizedPublishResult> {
+  public async publishPost(input: PublishPostInput, userId?: string): Promise<NormalizedPublishResult> {
     // 1. Validate basic input requirements
     this.validateInput(input);
 
@@ -39,8 +39,12 @@ export class PublisherService {
     }
 
     // 3. Idempotency handling
-    const idempotencyKey = input.idempotencyKey || `req_${uuidv4()}`;
-    const existingRecord = await this.postRepository.findByIdempotencyKey(idempotencyKey);
+    const rawKey = input.idempotencyKey || `req_${uuidv4()}`;
+    const storageKey = userId && !rawKey.startsWith(`${userId}:`) ? `${userId}:${rawKey}` : rawKey;
+
+    const existingRecord = userId
+      ? await this.postRepository.findByIdempotencyKey(rawKey, userId)
+      : await this.postRepository.findUnscopedByIdempotencyKey(rawKey);
     if (existingRecord) {
       return {
         success: existingRecord.status === 'published' || existingRecord.status === 'scheduled',
@@ -53,22 +57,33 @@ export class PublisherService {
     const internalPostId = `post_${uuidv4()}`;
 
     // 4. Delegate to Zernio Publisher
-    const result = await this.zernioPublisher.publish(input, idempotencyKey, internalPostId);
+    const result = await this.zernioPublisher.publish(input, storageKey, internalPostId);
 
     // 5. Store record in repository ONLY IF not completely failed or fake
     if (result.status !== 'failed') {
       const now = new Date().toISOString();
+      const scheduledFor = input.scheduledFor || input.scheduledAt;
+      const isScheduled = result.status === 'scheduled' || Boolean(scheduledFor && input.publishNow === false);
+      const postPlatforms = (result.platforms || []).map((rp) => {
+        const matchingInput = (input.platforms || []).find((ip) => ip.platform === rp.platform);
+        return {
+          ...rp,
+          accountId: matchingInput?.accountId,
+        };
+      });
+
       const postRecord: PostRecord = {
         internalPostId,
-        providerPostId: result.postId,
-        idempotencyKey,
+        userId,
+        providerPostId: result.postId && result.postId !== internalPostId ? result.postId : undefined,
+        idempotencyKey: storageKey,
         caption: input.caption,
         imageUrl: input.imageUrl,
-        publishNow: input.publishNow !== false && !input.scheduledFor,
-        scheduledFor: input.scheduledFor,
+        publishNow: !isScheduled,
+        scheduledFor: scheduledFor,
         timezone: input.timezone,
         status: result.status,
-        platforms: result.platforms,
+        platforms: postPlatforms,
         createdAt: now,
         updatedAt: now,
       };
@@ -90,11 +105,16 @@ export class PublisherService {
       throw new SocialPublishingError('At least one platform must be specified in platforms array.', 400);
     }
 
-    if (input.imageUrl) {
-      try {
-        new URL(input.imageUrl);
-      } catch (_e) {
-        throw new SocialPublishingError('Invalid imageUrl format. Must be a valid URL string.', 400);
+    if (input.imageUrl && typeof input.imageUrl === 'string') {
+      const trimmed = input.imageUrl.trim();
+      if (!trimmed) {
+        input.imageUrl = undefined;
+      } else {
+        try {
+          new URL(trimmed);
+        } catch (_e) {
+          throw new SocialPublishingError('Invalid imageUrl format. Must be a valid URL string.', 400);
+        }
       }
     }
 

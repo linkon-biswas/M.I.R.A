@@ -1,17 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Bell, CheckCircle2, AlertCircle, Menu } from 'lucide-react';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { Bell, CheckCircle2, AlertCircle, Menu, LogOut, LogIn } from 'lucide-react';
 import { apiService } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Navbar({ onToggleSidebar }) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [healthStatus, setHealthStatus] = useState('checking');
 
   useEffect(() => {
-    apiService.verifyAuth()
+    apiService
+      .verifyAuth()
       .then(() => setHealthStatus('connected'))
       .catch(() => setHealthStatus('disconnected'));
   }, []);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      navigate('/login');
+    }
+  };
 
   const getTitle = () => {
     switch (location.pathname) {
@@ -30,6 +42,10 @@ export default function Navbar({ onToggleSidebar }) {
         return 'Dashboard';
     }
   };
+
+  const userInitials = user?.email
+    ? user.email.substring(0, 2).toUpperCase()
+    : 'AI';
 
   return (
     <header className="h-16 bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 px-4 md:px-6 flex items-center justify-between sticky top-0 z-20">
@@ -67,16 +83,35 @@ export default function Navbar({ onToggleSidebar }) {
           <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500"></span>
         </button>
 
-        {/* Agency User Avatar */}
-        <div className="flex items-center gap-3 pl-2 border-l border-slate-800">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
-            AI
+        {/* User / Auth Section */}
+        {user ? (
+          <div className="flex items-center gap-3 pl-2 border-l border-slate-800">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-sm shrink-0">
+              {userInitials}
+            </div>
+            <div className="hidden sm:block text-left">
+              <p className="text-xs font-medium text-slate-200 max-w-[120px] truncate">{user.email}</p>
+              <p className="text-[10px] text-slate-400 capitalize">{user.role}</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              title="Sign out"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
-          <div className="hidden sm:block text-left">
-            <p className="text-xs font-medium text-slate-200">Marketing Specialist</p>
-            <p className="text-[10px] text-slate-400">Enterprise Workspace</p>
+        ) : (
+          <div className="pl-2 border-l border-slate-800">
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              Sign In
+            </Link>
           </div>
-        </div>
+        )}
       </div>
     </header>
   );

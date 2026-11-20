@@ -144,4 +144,66 @@ describe('PublisherService', () => {
     // Zernio publisher should only be called once because second call is deduplicated from repository
     expect(mockZernioPublisher.publish).toHaveBeenCalledTimes(1);
   });
+
+  test('Test Case 15: Scheduled post with scheduledAt, publishNow false, and empty imageUrl string', async () => {
+    mockZernioPublisher.publish.mockResolvedValueOnce({
+      success: true,
+      postId: 'zernio_sched_105',
+      status: 'scheduled',
+      platforms: [{ platform: 'facebook', status: 'scheduled' }],
+    });
+
+    const result = await publisherService.publishPost({
+      caption: 'automatic post done',
+      imageUrl: '',
+      platforms: [{ platform: 'facebook', accountId: '6ab3ef6b8d284ffb21357563' }],
+      publishNow: false,
+      scheduledAt: '2026-11-17T22:13',
+      timezone: 'Asia/Dhaka',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('scheduled');
+    expect(result.platforms[0].status).toBe('scheduled');
+
+    const saved = await postRepository.findById(result.postId);
+    expect(saved).toBeDefined();
+    expect(saved?.status).toBe('scheduled');
+    expect(saved?.scheduledFor).toBe('2026-11-17T22:13');
+  });
+
+  test('Test Case 16: ZernioPublisher normalization maps Zernio pending platform status to scheduled', async () => {
+    const mockZernioClient = {
+      createPost: jest.fn().mockResolvedValueOnce({
+        post: {
+          _id: 'zernio_post_pending_test',
+          status: 'scheduled',
+          platforms: [
+            {
+              platform: 'facebook',
+              status: 'pending',
+              accountId: '6ab3ef6b8d284ffb21357563',
+            },
+          ],
+        },
+        message: 'Post scheduled successfully',
+      }),
+    } as any;
+
+    const realPublisher = new ZernioPublisher(mockZernioClient, platformRouter);
+    const pubResult = await realPublisher.publish(
+      {
+        caption: 'automatic post done',
+        platforms: [{ platform: 'facebook', accountId: '6ab3ef6b8d284ffb21357563' }],
+        publishNow: false,
+        scheduledFor: '2026-11-17T22:13',
+      },
+      'req_test_pending_1',
+      'internal_p_1'
+    );
+
+    expect(pubResult.success).toBe(true);
+    expect(pubResult.status).toBe('scheduled');
+    expect(pubResult.platforms[0].status).toBe('scheduled');
+  });
 });

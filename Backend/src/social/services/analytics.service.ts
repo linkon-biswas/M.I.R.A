@@ -5,7 +5,9 @@ import {
   NormalizedPlatformMetric,
   EngagementActivityItem,
   NormalizedPostMetrics,
+  NormalizedAnalyticsOverview,
 } from '../types/analytics.types';
+import { calculateEngagementRate } from '../providers/zernio/zernio.analytics';
 
 import { AnalyticsRepositoryService } from './analytics-repository.service';
 import { PostRepositoryService } from './post-repository.service';
@@ -35,7 +37,8 @@ export class AnalyticsService {
 
   public async getPostAnalytics(
     postId: string,
-    forceRefresh: boolean = false
+    forceRefresh: boolean = false,
+    userId?: string
   ): Promise<any> {
     if (!forceRefresh) {
       const cached =
@@ -44,6 +47,15 @@ export class AnalyticsService {
         );
 
       if (cached) {
+        if (userId) {
+          const post = await this.postRepository.findById(postId, userId);
+          if (!post) {
+            throw new SocialPublishingError(
+              `Post analytics not found for ID: ${postId}`,
+              404
+            );
+          }
+        }
         return cached;
       }
     }
@@ -57,7 +69,8 @@ export class AnalyticsService {
        */
       const localPost =
         await this.postRepository.findById(
-          postId
+          postId,
+          userId
         );
 
       /*
@@ -92,7 +105,8 @@ export class AnalyticsService {
        */
       const resolvedZernioPostId =
         await this.postRepository.resolveZernioPostId(
-          postId
+          postId,
+          userId
         );
 
       addCandidate(
@@ -119,6 +133,15 @@ export class AnalyticsService {
             addCandidate(
               platform.platformPostId
             );
+            addCandidate(
+              (platform as any).zernioPostId
+            );
+
+            // Handle composite Facebook IDs like "pageId_postId"
+            if (platform.platformPostId && platform.platformPostId.includes('_')) {
+              const parts = platform.platformPostId.split('_');
+              addCandidate(parts[parts.length - 1]);
+            }
           }
         }
       }
@@ -203,6 +226,9 @@ export class AnalyticsService {
               existing.status = 'published';
               existing.platformPostId = existing.platformPostId || lp.platformPostId;
               existing.platformPostUrl = existing.platformPostUrl || lp.platformPostUrl;
+              if (localPost.platforms.length === 1 && analytics.metrics) {
+                existing.metrics = analytics.metrics;
+              }
             } else if (!existing && lpPlatform) {
               // Platform not in the standard 6 — add it.
               enrichedPlatformBreakdown.push({
@@ -216,85 +242,18 @@ export class AnalyticsService {
           }
         }
 
-        // Generate synthetic engagementActivity from timeline when provider
-        // did not return real activity items (Zernio currently does not expose
-        // individual reactions/comments via its API).
-        let enrichedEngagementActivity: EngagementActivityItem[] =
-          Array.isArray(analytics.engagementActivity) && analytics.engagementActivity.length > 0
+        // Preserve genuine provider-supplied engagementActivity items if present.
+        // Do NOT synthesize fake event rows, actors, or timestamps from daily timeline deltas.
+        const engagementActivity: EngagementActivityItem[] =
+          Array.isArray(analytics.engagementActivity)
             ? analytics.engagementActivity
             : [];
-
-        if (enrichedEngagementActivity.length === 0 && Array.isArray(analytics.timeline)) {
-          const reactionLabelMap: Record<string, string> = {
-            like: '👍 Like', love: '❤️ Love', haha: '😆 Haha',
-            wow: '😮 Wow', sad: '😢 Sad', angry: '😡 Angry',
-            comment: '💬 Comment', click: '🖱️ Click', share: '🔁 Share',
-          };
-
-          let prevLikes = 0;
-          let prevComments = 0;
-          let prevShares = 0;
-          let actIdx = 0;
-
-          for (const point of analytics.timeline) {
-            const likeDelta = Math.max(0, (point.likes || 0) - prevLikes);
-            const commentDelta = Math.max(0, (point.comments || 0) - prevComments);
-            const shareDelta = Math.max(0, (point.shares || 0) - prevShares);
-
-            if (likeDelta > 0) {
-              enrichedEngagementActivity.push({
-                id: `synthetic_like_${actIdx++}`,
-                actorName: 'Facebook Page Audience (Verified Interaction)',
-                actorType: 'audience_snapshot',
-                platform: analytics.platform,
-                actionType: 'like',
-                reactionLabel: reactionLabelMap['like'],
-                timestamp: point.date
-                  ? new Date(point.date).toISOString()
-                  : new Date().toISOString(),
-                isAggregatedPrivacyFallback: true,
-              });
-            }
-            if (commentDelta > 0) {
-              enrichedEngagementActivity.push({
-                id: `synthetic_comment_${actIdx++}`,
-                actorName: 'Facebook Page Audience (Verified Interaction)',
-                actorType: 'audience_snapshot',
-                platform: analytics.platform,
-                actionType: 'comment',
-                reactionLabel: reactionLabelMap['comment'],
-                timestamp: point.date
-                  ? new Date(point.date).toISOString()
-                  : new Date().toISOString(),
-                isAggregatedPrivacyFallback: true,
-              });
-            }
-            if (shareDelta > 0) {
-              enrichedEngagementActivity.push({
-                id: `synthetic_share_${actIdx++}`,
-                actorName: 'Facebook Page Audience (Verified Interaction)',
-                actorType: 'audience_snapshot',
-                platform: analytics.platform,
-                actionType: 'share',
-                reactionLabel: reactionLabelMap['share'],
-                timestamp: point.date
-                  ? new Date(point.date).toISOString()
-                  : new Date().toISOString(),
-                isAggregatedPrivacyFallback: true,
-              });
-            }
-
-            prevLikes = point.likes || 0;
-            prevComments = point.comments || 0;
-            prevShares = point.shares || 0;
-          }
-        }
 
         const responseData: NormalizedPostAnalytics = {
           ...analytics,
           postId,
           platformBreakdown: enrichedPlatformBreakdown,
-          engagementActivity: enrichedEngagementActivity,
+          engagementActivity,
         };
 
         this.analyticsRepository.setPostAnalytics(
@@ -323,13 +282,6 @@ export class AnalyticsService {
         return responseData;
       }
 
-      /*
-       * No upstream analytics yet.
-       *
-       * If the local post exists, this is NOT a 404.
-       * The post exists; analytics simply are not
-       * available yet.
-       */
       if (localPost) {
         return {
           postId,
@@ -386,7 +338,8 @@ export class AnalyticsService {
 
   public async getPostTimeline(
     postId: string,
-    forceRefresh: boolean = false
+    forceRefresh: boolean = false,
+    userId?: string
   ): Promise<any> {
     if (!forceRefresh) {
       const cached =
@@ -395,6 +348,15 @@ export class AnalyticsService {
         );
 
       if (cached) {
+        if (userId) {
+          const post = await this.postRepository.findById(postId, userId);
+          if (!post) {
+            throw new SocialPublishingError(
+              `Post timeline not found for ID: ${postId}`,
+              404
+            );
+          }
+        }
         return {
           postId,
           timeline: cached,
@@ -404,8 +366,16 @@ export class AnalyticsService {
 
     const localPost =
       await this.postRepository.findById(
-        postId
+        postId,
+        userId
       );
+
+    if (userId && !localPost) {
+      throw new SocialPublishingError(
+        `Post timeline not found for ID: ${postId}`,
+        404
+      );
+    }
 
     const candidateIds: string[] = [];
 
@@ -432,7 +402,8 @@ export class AnalyticsService {
 
     const resolvedZernioPostId =
       await this.postRepository.resolveZernioPostId(
-        postId
+        postId,
+        userId
       );
 
     addCandidate(
@@ -506,54 +477,134 @@ export class AnalyticsService {
 
   public async getOverview(
     filter?: AnalyticsOverviewFilter,
-    forceRefresh: boolean = false
-  ): Promise<any> {
-    const filterKey =
-      JSON.stringify(filter || {});
-
-    if (!forceRefresh) {
-      const cached =
-        this.analyticsRepository.getOverview(
-          filterKey
-        );
-
-      if (cached) {
-        return {
-          success: true,
-          overview: cached,
-        };
-      }
+    forceRefresh: boolean = false,
+    userId?: string
+  ): Promise<{ success: boolean; overview: NormalizedAnalyticsOverview }> {
+    if (!userId) {
+      throw new SocialPublishingError('Authentication required for analytics overview.', 401);
     }
 
-    try {
-      const overview =
-        await this.analyticsProvider.getOverview(
-          filter
-        );
+    // 1. Load ONLY the authenticated user's posts from the user-scoped repository
+    const userPosts = await this.postRepository.listAll(userId);
 
-      this.analyticsRepository.setOverview(
-        filterKey,
-        overview
-      );
-
-      return {
-        success: true,
-        overview,
-      };
-    } catch (error: any) {
+    // 2. Filter for published posts owned by this user
+    // Include posts confirmed published or legacy scheduled posts whose scheduled time has passed and have provider IDs
+    let publishedPosts = userPosts.filter((p) => {
+      if (p.status === 'published') return true;
+      if (Array.isArray(p.platforms) && p.platforms.some((pl) => pl.status === 'published' || pl.platformPostId)) return true;
       if (
-        error instanceof SocialPublishingError
+        p.status === 'scheduled' &&
+        (p.providerPostId || p.platforms?.some((pl: any) => pl.zernioPostId || pl.platformPostId)) &&
+        p.scheduledFor &&
+        new Date(p.scheduledFor).getTime() <= Date.now()
       ) {
-        throw error;
+        return true;
       }
+      return false;
+    });
 
-      throw new SocialPublishingError(
-        `Failed to fetch analytics overview: ${error?.message ||
-        'Unknown error'
-        }`,
-        500
+    // 3. Apply optional platform filter
+    if (filter?.platform) {
+      const targetPlatform = filter.platform.toLowerCase();
+      publishedPosts = publishedPosts.filter(
+        (p) =>
+          Array.isArray(p.platforms) &&
+          p.platforms.some((pl) => (pl.platform || '').toLowerCase() === targetPlatform)
       );
     }
+
+    // 4. Apply optional date filters (by post creation date)
+    if (filter?.fromDate) {
+      const fromTime = new Date(filter.fromDate).getTime();
+      if (!isNaN(fromTime)) {
+        publishedPosts = publishedPosts.filter(
+          (p) => new Date(p.createdAt).getTime() >= fromTime
+        );
+      }
+    }
+    if (filter?.toDate) {
+      const toTime = new Date(filter.toDate).getTime();
+      if (!isNaN(toTime)) {
+        publishedPosts = publishedPosts.filter(
+          (p) => new Date(p.createdAt).getTime() <= toTime
+        );
+      }
+    }
+
+    // 5. Aggregate per-post metrics for these exact owned published posts
+    let totalImpressions = 0;
+    let totalReach = 0;
+    let totalLikes = 0;
+    let totalComments = 0;
+    let totalShares = 0;
+    let totalClicks = 0;
+    let totalViews = 0;
+
+    for (const post of publishedPosts) {
+      try {
+        const postAnalytics = await this.getPostAnalytics(post.internalPostId, forceRefresh, userId);
+        if (postAnalytics?.metrics) {
+          let m = postAnalytics.metrics;
+          if (filter?.platform && postAnalytics.platformBreakdown?.length) {
+            const pb = postAnalytics.platformBreakdown.find(
+              (p: NormalizedPlatformMetric) =>
+                p.platform.toLowerCase() === filter.platform!.toLowerCase()
+            );
+            if (
+              pb &&
+              pb.metrics &&
+              (pb.metrics.impressions > 0 ||
+                pb.metrics.reach > 0 ||
+                pb.metrics.likes > 0 ||
+                pb.metrics.clicks > 0)
+            ) {
+              m = pb.metrics;
+            }
+          }
+
+          totalImpressions += Number(m.impressions) || 0;
+          totalReach += Number(m.reach) || 0;
+          totalLikes += Number(m.likes) || 0;
+          totalComments += Number(m.comments) || 0;
+          totalShares += Number(m.shares) || 0;
+          totalClicks += Number(m.clicks) || 0;
+          totalViews += Number(m.views) || 0;
+        }
+      } catch (err) {
+        console.warn(
+          `[AnalyticsService] Failed to load metrics for user post ${post.internalPostId}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    // 6. Calculate pooled engagement rate across these owned posts
+    const pooledEngagementRate = calculateEngagementRate({
+      impressions: totalImpressions,
+      reach: totalReach,
+      likes: totalLikes,
+      comments: totalComments,
+      shares: totalShares,
+      clicks: totalClicks,
+      views: totalViews,
+    });
+
+    const overview: NormalizedAnalyticsOverview = {
+      totalPosts: publishedPosts.length,
+      impressions: totalImpressions,
+      reach: totalReach,
+      likes: totalLikes,
+      comments: totalComments,
+      shares: totalShares,
+      clicks: totalClicks,
+      views: totalViews,
+      engagementRate: pooledEngagementRate,
+    };
+
+    return {
+      success: true,
+      overview,
+    };
   }
 
   private async persistAnalyticsSnapshot(
@@ -700,6 +751,85 @@ export class AnalyticsService {
             ]
           );
         }
+      }
+      /*
+       * Fix B — status sync:
+       *
+       * If Zernio returned real analytics (meaning the post is live),
+       * but our local `posts` / `post_platforms` rows still say
+       * "scheduled", upgrade them to "published" so that
+       * GET /posts/:id reflects the real state.
+       *
+       * We only do this when analytics contain non-zero engagement
+       * OR when the analytics object has a `publishedAt` field —
+       * either is a reliable signal that the post went live.
+       */
+      const isConfirmedPublished =
+        (analytics as any).publishedAt ||
+        (m && (
+          (m.impressions ?? 0) > 0 ||
+          (m.reach ?? 0) > 0 ||
+          (m.likes ?? 0) > 0 ||
+          (m.comments ?? 0) > 0 ||
+          (m.clicks ?? 0) > 0 ||
+          (m.views ?? 0) > 0
+        ));
+
+      if (isConfirmedPublished) {
+        /*
+         * Retrieve the platform-level details Zernio confirmed
+         * (platformPostId, platformPostUrl, publishedAt) from the
+         * analytics breakdown so we can persist them.
+         */
+        const breakdown = Array.isArray(analytics.platformBreakdown)
+          ? analytics.platformBreakdown
+          : [];
+        const publishedBreakdownEntry = breakdown.find(
+          (b) => b.status === 'published' && b.platformPostId
+        );
+
+        const platformPostId = publishedBreakdownEntry?.platformPostId || null;
+        const platformPostUrl = publishedBreakdownEntry?.platformPostUrl || null;
+        const publishedAt = (analytics as any).publishedAt
+          ? new Date((analytics as any).publishedAt)
+          : new Date();
+
+        /*
+         * Update post_platforms row (if still "scheduled").
+         */
+        await pool.query(
+          `UPDATE post_platforms
+           SET
+             status = 'published',
+             platform_post_id = COALESCE($1, platform_post_id),
+             platform_post_url = COALESCE($2, platform_post_url),
+             published_at = COALESCE(published_at, $3)
+           WHERE id = $4
+             AND status = 'scheduled'`,
+          [platformPostId, platformPostUrl, publishedAt, postPlatformId]
+        );
+
+        /*
+         * Update the parent posts row (if still "scheduled").
+         * We also set updated_at and published_at so the
+         * frontend shows the real transition timestamp.
+         */
+        await pool.query(
+          `UPDATE posts
+           SET
+             status = 'published',
+             published_at = COALESCE(published_at, $1),
+             updated_at = NOW()
+           WHERE id = $2
+             AND status = 'scheduled'`,
+          [publishedAt, internalPostId]
+        );
+
+        console.log(
+          '[AnalyticsService] Status sync: upgraded post',
+          internalPostId,
+          'and its platform row to "published".'
+        );
       }
     } catch (err) {
       console.error(

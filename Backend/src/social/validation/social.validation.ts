@@ -7,10 +7,11 @@ export const targetPlatformSchema = z.object({
 
 export const publishPostSchema = z.object({
   caption: z.string().optional(),
-  imageUrl: z.string().url('Invalid image URL format').optional().or(z.literal('')),
+  imageUrl: z.string().url('Invalid image URL format').optional().or(z.literal('')).nullable(),
   platforms: z.array(targetPlatformSchema).min(1, 'At least one platform must be specified.'),
   publishNow: z.boolean().optional(),
   scheduledFor: z.string().optional(),
+  scheduledAt: z.string().optional(),
   timezone: z.string().optional(),
   idempotencyKey: z.string().optional(),
 });

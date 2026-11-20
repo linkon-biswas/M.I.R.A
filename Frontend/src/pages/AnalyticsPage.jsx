@@ -69,11 +69,11 @@ export default function AnalyticsPage() {
   // Chart dataset based on overview metric values
   const breakdownData = overview ? [
     { name: 'Impressions', count: overview.impressions || 0 },
-    { name: 'Reach', count: overview.reach || 0 },
-    { name: 'Likes', count: overview.likes || 0 },
+    { name: 'Summed Reach', count: overview.reach || 0 },
+    { name: 'Reactions / Likes', count: overview.likes || 0 },
     { name: 'Comments', count: overview.comments || 0 },
     { name: 'Shares', count: overview.shares || 0 },
-    { name: 'Clicks', count: overview.clicks || 0 },
+    { name: 'Link Clicks', count: overview.clicks || 0 },
   ] : [];
 
   return (
@@ -158,13 +158,31 @@ export default function AnalyticsPage() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard title="Total Posts Analyzed" value={overview?.totalPosts || 0} icon={BarChart3} color="blue" />
-            <StatCard title="Total Reach" value={overview?.reach || 0} icon={Users} color="purple" />
+            <StatCard
+              title="Summed Reach"
+              value={overview?.reach || 0}
+              icon={Users}
+              color="purple"
+              subtitle="Sum of provider-returned reach values; not a deduplicated count of unique people."
+            />
             <StatCard title="Total Impressions" value={overview?.impressions || 0} icon={Eye} color="blue" />
-            <StatCard title="Avg Engagement Rate" value={`${overview?.engagementRate || 0}%`} icon={TrendingUp} color="amber" />
+            <StatCard
+              title="Aggregate Interaction Rate"
+              value={`${overview?.engagementRate || 0}%`}
+              icon={TrendingUp}
+              color="amber"
+              subtitle="Pooled ratio: interactions (reactions/likes, comments, shares, clicks) divided by summed reach (or impressions if reach is zero); not an arithmetic average of post rates."
+            />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard title="Likes" value={overview?.likes || 0} icon={Heart} color="emerald" />
+            <StatCard
+              title="Reactions / Likes"
+              value={overview?.likes || 0}
+              icon={Heart}
+              color="emerald"
+              subtitle="Facebook aggregate may include Love, Wow, and other reactions; subtype counts unavailable."
+            />
             <StatCard title="Comments" value={overview?.comments || 0} icon={MessageSquare} color="indigo" />
             <StatCard title="Shares" value={overview?.shares || 0} icon={Share2} color="blue" />
             <StatCard title="Link Clicks" value={overview?.clicks || 0} icon={MousePointer} color="purple" />

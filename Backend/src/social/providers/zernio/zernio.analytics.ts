@@ -62,7 +62,13 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
 
     const posts: any[] = Array.isArray(rawData?.posts)
       ? rawData.posts
-      : [];
+      : Array.isArray(rawData?.data?.posts)
+        ? rawData.data.posts
+        : Array.isArray(rawData?.data)
+          ? rawData.data
+          : Array.isArray(rawData)
+            ? rawData
+            : [];
 
     console.log(
       '[ZernioAnalytics] SEARCHING FOR POST ID:',
@@ -74,23 +80,54 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
       posts.length
     );
 
+    const normalizedTargetId = String(postId || '').trim().toLowerCase();
+
+    const matchesId = (candidate: unknown): boolean => {
+      if (candidate === undefined || candidate === null) return false;
+      const str = String(candidate).trim().toLowerCase();
+      if (!str) return false;
+      if (str === normalizedTargetId) return true;
+      // Handle Facebook composite ID matching (pageId_postId vs postId)
+      if (str.includes('_') && normalizedTargetId) {
+        const bareStr = str.split('_').pop();
+        if (bareStr === normalizedTargetId) return true;
+      }
+      if (normalizedTargetId.includes('_') && str) {
+        const bareTarget = normalizedTargetId.split('_').pop();
+        if (bareTarget === str) return true;
+      }
+      return false;
+    };
+
     const foundPost = posts.find((p) => {
       const platformMatches = Array.isArray(p?.platforms)
         ? p.platforms.some(
           (pl: any) =>
-            String(pl?.platformPostId || '') === String(postId) ||
-            String(pl?.postId || '') === String(postId) ||
-            String(pl?.id || '') === String(postId)
+            matchesId(pl?.platformPostId) ||
+            matchesId(pl?.platform_post_id) ||
+            matchesId(pl?.postId) ||
+            matchesId(pl?.post_id) ||
+            matchesId(pl?.id) ||
+            matchesId(pl?._id) ||
+            matchesId(pl?.zernioPostId) ||
+            matchesId(pl?.zernio_post_id)
         )
         : false;
 
       const directMatch =
-        String(p?._id || '') === String(postId) ||
-        String(p?.id || '') === String(postId) ||
-        String(p?.postId || '') === String(postId) ||
-        String(p?.zernioPostId || '') === String(postId) ||
-        String(p?.latePostId || '') === String(postId) ||
-        String(p?.platformPostId || '') === String(postId);
+        matchesId(p?._id) ||
+        matchesId(p?.id) ||
+        matchesId(p?.postId) ||
+        matchesId(p?.post_id) ||
+        matchesId(p?.zernioPostId) ||
+        matchesId(p?.zernio_post_id) ||
+        matchesId(p?.latePostId) ||
+        matchesId(p?.late_post_id) ||
+        matchesId(p?.platformPostId) ||
+        matchesId(p?.platform_post_id) ||
+        matchesId(p?.externalId) ||
+        matchesId(p?.external_id) ||
+        matchesId(p?.providerPostId);
 
       return directMatch || platformMatches;
     });
@@ -137,6 +174,8 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
         ? foundPost.platforms[0]
         : undefined;
 
+    const platformAnalytics = firstPlatform?.analytics || {};
+
     const platform =
       foundPost.platform ||
       firstPlatform?.platform ||
@@ -150,37 +189,90 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
       firstPlatform?.platformPostId ||
       undefined;
 
-    const impressions = Number(
-      rawAnalytics.impressions || 0
+    let impressions = Number(
+      rawAnalytics.impressions ?? platformAnalytics.impressions ?? 0
     );
 
-    const reach = Number(
-      rawAnalytics.reach || 0
+    let reach = Number(
+      rawAnalytics.reach ?? platformAnalytics.reach ?? 0
     );
 
-    const likes = Number(
-      rawAnalytics.likes || 0
+    let likes = Number(
+      rawAnalytics.likes ?? platformAnalytics.likes ?? 0
     );
 
-    const comments = Number(
-      rawAnalytics.comments || 0
+    let comments = Number(
+      rawAnalytics.comments ?? platformAnalytics.comments ?? 0
     );
 
-    const shares = Number(
-      rawAnalytics.shares || 0
+    let shares = Number(
+      rawAnalytics.shares ?? platformAnalytics.shares ?? 0
     );
 
-    const saves = Number(
-      rawAnalytics.saves || 0
+    let saves = Number(
+      rawAnalytics.saves ?? platformAnalytics.saves ?? 0
     );
 
-    const clicks = Number(
-      rawAnalytics.clicks || 0
+    let clicks = Number(
+      rawAnalytics.clicks ?? platformAnalytics.clicks ?? 0
     );
 
-    const views = Number(
-      rawAnalytics.views || 0
+    let views = Number(
+      rawAnalytics.views ?? platformAnalytics.views ?? 0
     );
+
+    let reactionBreakdown: ReactionBreakdown | null = null;
+
+    if (
+      rawAnalytics.reactionBreakdown &&
+      typeof rawAnalytics.reactionBreakdown === 'object'
+    ) {
+      reactionBreakdown = {
+        like: Number(
+          rawAnalytics.reactionBreakdown.like || 0
+        ),
+        love: Number(
+          rawAnalytics.reactionBreakdown.love || 0
+        ),
+        haha: Number(
+          rawAnalytics.reactionBreakdown.haha || 0
+        ),
+        wow: Number(
+          rawAnalytics.reactionBreakdown.wow || 0
+        ),
+        sad: Number(
+          rawAnalytics.reactionBreakdown.sad || 0
+        ),
+        angry: Number(
+          rawAnalytics.reactionBreakdown.angry || 0
+        ),
+      };
+    }
+
+    let timeline: NormalizedTimelinePoint[] = [];
+
+    try {
+      const timelinePostId =
+        foundPost.latePostId ||
+        foundPost.zernioPostId ||
+        postId ||
+        foundPost._id ||
+        foundPost.id ||
+        foundPost.postId;
+
+      timeline = await this.getPostTimeline(
+        timelinePostId
+      );
+    } catch (error) {
+      console.log(
+        '[ZernioAnalytics] TIMELINE FETCH FAILED:',
+        error instanceof Error
+          ? error.message
+          : error
+      );
+
+      timeline = [];
+    }
 
     /*
      * IMPORTANT FIX:
@@ -220,57 +312,6 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
       views,
       engagementRate,
     };
-
-    let reactionBreakdown: ReactionBreakdown | null = null;
-
-    if (
-      rawAnalytics.reactionBreakdown &&
-      typeof rawAnalytics.reactionBreakdown === 'object'
-    ) {
-      reactionBreakdown = {
-        like: Number(
-          rawAnalytics.reactionBreakdown.like || 0
-        ),
-        love: Number(
-          rawAnalytics.reactionBreakdown.love || 0
-        ),
-        haha: Number(
-          rawAnalytics.reactionBreakdown.haha || 0
-        ),
-        wow: Number(
-          rawAnalytics.reactionBreakdown.wow || 0
-        ),
-        sad: Number(
-          rawAnalytics.reactionBreakdown.sad || 0
-        ),
-        angry: Number(
-          rawAnalytics.reactionBreakdown.angry || 0
-        ),
-      };
-    }
-
-    let timeline: NormalizedTimelinePoint[] = [];
-
-    try {
-      const timelinePostId =
-        foundPost._id ||
-        foundPost.id ||
-        foundPost.postId ||
-        postId;
-
-      timeline = await this.getPostTimeline(
-        timelinePostId
-      );
-    } catch (error) {
-      console.log(
-        '[ZernioAnalytics] TIMELINE FETCH FAILED:',
-        error instanceof Error
-          ? error.message
-          : error
-      );
-
-      timeline = [];
-    }
 
     // Build platformBreakdown: map each platform entry from raw Zernio data.
     // Zernio currently provides aggregate metrics only, so the matched platform
@@ -343,7 +384,7 @@ export class ZernioAnalyticsProvider implements SocialAnalyticsProvider {
         const hasActorName = !!(item.actorName || item.userName || item.name);
         return {
           id: item.id || `activity_${idx}`,
-          actorName: item.actorName || item.userName || item.name || 'Facebook Page Audience (Verified Interaction)',
+          actorName: item.actorName || item.userName || item.name || 'Anonymous User',
           actorType: (hasActorName ? 'user' : 'audience_snapshot') as EngagementActivityItem['actorType'],
           platform,
           actionType,

@@ -9,15 +9,22 @@ describe('POST /api/social/publish API Endpoint', () => {
   let app: any;
   let mockZernioPublisher: jest.Mocked<ZernioPublisher>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const platformRouter = new PlatformRouter();
     const postRepository = new PostRepositoryService();
+    await postRepository.saveAccount({
+      id: '6ab3ef6b8d284ffb21357563',
+      userId: 'test-user',
+      platform: 'facebook',
+      accountId: '6ab3ef6b8d284ffb21357563',
+      displayName: 'Facebook Page',
+    });
     mockZernioPublisher = {
       publish: jest.fn(),
     } as any;
 
     const publisherService = new PublisherService(platformRouter, mockZernioPublisher, postRepository);
-    app = createApp(publisherService, postRepository);
+    app = createApp(publisherService, postRepository, undefined, { userId: 'test-user', role: 'owner' });
   });
 
   test('POST /api/social/publish with valid Facebook payload returns 200', async () => {
@@ -87,5 +94,42 @@ describe('POST /api/social/publish API Endpoint', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.count).toBeGreaterThanOrEqual(1);
     expect(res.body.posts[0].caption).toBe('Tracked Post Test');
+  });
+
+  test('POST /api/social/publish schedules post with scheduledAt, publishNow false, and empty imageUrl', async () => {
+    mockZernioPublisher.publish.mockResolvedValueOnce({
+      success: true,
+      postId: 'zernio_sched_api_1',
+      status: 'scheduled',
+      platforms: [{ platform: 'facebook', status: 'scheduled' }],
+    });
+
+    const res = await request(app)
+      .post('/api/social/publish')
+      .send({
+        caption: 'automatic post done',
+        imageUrl: '',
+        platforms: [{ platform: 'facebook', accountId: '6ab3ef6b8d284ffb21357563' }],
+        publishNow: false,
+        scheduledAt: '2026-11-17T22:13',
+        timezone: 'Asia/Dhaka',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.status).toBe('scheduled');
+    expect(res.body.platforms[0].platform).toBe('facebook');
+    expect(res.body.platforms[0].status).toBe('scheduled');
+
+    // Ensure mock was called with normalized fields
+    expect(mockZernioPublisher.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caption: 'automatic post done',
+        scheduledFor: '2026-11-17T22:13',
+        publishNow: false,
+      }),
+      expect.any(String),
+      expect.any(String)
+    );
   });
 });

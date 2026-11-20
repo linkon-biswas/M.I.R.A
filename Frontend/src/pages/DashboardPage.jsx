@@ -9,7 +9,8 @@ import {
   PenSquare, 
   ArrowRight,
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  ExternalLink
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { apiService } from '../services/api';
@@ -17,11 +18,15 @@ import StatCard from '../components/StatCard';
 import StatusBadge from '../components/StatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import CampaignTrackingSection from '../components/CampaignTrackingSection';
+import ConnectWebsiteSection from '../components/ConnectWebsiteSection';
 import { formatDate } from '../utils/formatters';
 
 export default function DashboardPage() {
   const [overview, setOverview] = useState(null);
   const [posts, setPosts] = useState([]);
+  const [connectedWebsites, setConnectedWebsites] = useState([]);
+  const [selectedWebsiteId, setSelectedWebsiteId] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
@@ -34,9 +39,10 @@ export default function DashboardPage() {
     }
     setError(null);
     try {
-      const [overviewRes, postsRes] = await Promise.allSettled([
+      const [overviewRes, postsRes, websitesRes] = await Promise.allSettled([
         forceRefresh ? apiService.getOverview({ refresh: 'true' }) : apiService.getOverview(),
         apiService.getPosts(),
+        apiService.getTrackingWebsites(),
       ]);
 
       if (overviewRes.status === 'fulfilled' && overviewRes.value?.overview) {
@@ -45,6 +51,14 @@ export default function DashboardPage() {
 
       if (postsRes.status === 'fulfilled' && postsRes.value?.posts) {
         setPosts(postsRes.value.posts);
+      }
+
+      if (websitesRes.status === 'fulfilled' && websitesRes.value?.websites) {
+        const sites = websitesRes.value.websites || [];
+        setConnectedWebsites(sites);
+        if (sites.length > 0 && !selectedWebsiteId) {
+          setSelectedWebsiteId(sites[0].id);
+        }
       }
     } catch (err) {
       setError('Failed to fetch dashboard metrics');
@@ -64,14 +78,15 @@ export default function DashboardPage() {
 
   const publishedCount = posts.filter(p => p.status === 'published').length;
   const recentPosts = posts.slice(0, 5);
+  const activeWebsite = connectedWebsites.find((w) => w.id === selectedWebsiteId) || connectedWebsites[0] || null;
 
   const hasAnalyticsData = overview && (overview.impressions > 0 || overview.reach > 0 || overview.totalPosts > 0 || posts.length > 0);
 
   // Mock chart data derived from real overview metric aggregates
   const chartData = overview ? [
-    { name: 'Reach', value: overview.reach || 0 },
+    { name: 'Summed Reach', value: overview.reach || 0 },
     { name: 'Impressions', value: overview.impressions || 0 },
-    { name: 'Likes', value: overview.likes || 0 },
+    { name: 'Reactions / Likes', value: overview.likes || 0 },
     { name: 'Comments', value: overview.comments || 0 },
     { name: 'Clicks', value: overview.clicks || 0 },
   ] : [];
@@ -84,7 +99,48 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Social Publishing Control Center</h1>
           <p className="text-sm text-slate-400 mt-1">Real-time performance analytics & multi-platform publishing agent.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+          {/* Connected Website Link & Selector */}
+          {connectedWebsites.length === 1 && activeWebsite && (
+            <a
+              href={activeWebsite.origin}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold border border-slate-700/80 transition-colors shadow-sm"
+              title={`Open ${activeWebsite.name} (${activeWebsite.origin}) in a new tab`}
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+              <span>Open Connected Website</span>
+            </a>
+          )}
+
+          {connectedWebsites.length > 1 && activeWebsite && (
+            <div className="flex items-center gap-2 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+              <select
+                value={selectedWebsiteId || activeWebsite.id}
+                onChange={(e) => setSelectedWebsiteId(e.target.value)}
+                className="bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500 max-w-[170px] truncate"
+                aria-label="Select connected website to open"
+              >
+                {connectedWebsites.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} ({w.origin})
+                  </option>
+                ))}
+              </select>
+              <a
+                href={activeWebsite.origin}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold border border-slate-700 transition-colors"
+                title={`Open ${activeWebsite.name} (${activeWebsite.origin}) in a new tab`}
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+                <span>Open Connected Website</span>
+              </a>
+            </div>
+          )}
+
           <button
             onClick={() => loadDashboardData(true)}
             disabled={refreshing || loading}
@@ -125,18 +181,18 @@ export default function DashboardPage() {
           }
         />
         <StatCard
-          title="Total Reach"
+          title="Summed Reach"
           value={overview?.reach || 0}
           icon={Users}
           color="purple"
-          subtitle="Unique audience reach"
+          subtitle="Sum of provider-returned reach values; not a deduplicated count of unique people."
         />
         <StatCard
-          title="Avg Engagement Rate"
+          title="Aggregate Interaction Rate"
           value={`${overview?.engagementRate || 0}%`}
           icon={BarChart2}
           color="amber"
-          subtitle="Likes, comments, shares & clicks"
+          subtitle="Pooled ratio: interactions (reactions/likes, comments, shares, clicks) divided by summed reach (or impressions if reach is zero); not an arithmetic average of post rates."
         />
       </div>
 
@@ -207,15 +263,18 @@ export default function DashboardPage() {
                   <BarChart2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Likes & Comments</p>
+                  <p className="text-xs text-slate-400">Reactions / Likes & Comments</p>
                   <div className="flex items-baseline gap-2">
                     <p className="text-sm font-bold text-slate-200">
                       {(overview?.likes || 0) + (overview?.comments || 0)}
                     </p>
                     <span className="text-[10px] text-slate-400">
-                      ({overview?.likes || 0} likes · {overview?.comments || 0} comments)
+                      ({overview?.likes || 0} reactions/likes · {overview?.comments || 0} comments)
                     </span>
                   </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Facebook aggregate may include Love, Wow, and other reactions; subtype counts unavailable.
+                  </p>
                 </div>
               </div>
             </div>
@@ -234,6 +293,12 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Campaign Performance & Link Tracking */}
+      <CampaignTrackingSection />
+
+      {/* Phase 2: Connect Website & On-Site Activity Tracking */}
+      <ConnectWebsiteSection />
 
       {/* Recent Posts Activity */}
       <div className="glass-panel p-6 rounded-2xl border border-slate-800">

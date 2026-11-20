@@ -7,10 +7,14 @@ import {
   BarChart3, 
   Share2, 
   Sparkles,
-  X
+  X,
+  Lock
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Sidebar({ isOpen, onClose }) {
+  const { hasSelectedAccount } = useAuth();
+
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
     { label: 'Create Post', path: '/create', icon: PenSquare },
@@ -40,7 +44,7 @@ export default function Sidebar({ isOpen, onClose }) {
                 <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <h1 className="font-bold text-lg text-slate-100 leading-tight">Zernio Social</h1>
+                <h1 className="font-bold text-lg text-slate-100 leading-tight">M.I.R.A</h1>
                 <p className="text-xs text-blue-400 font-medium">AI Marketing Suite</p>
               </div>
             </div>
@@ -54,10 +58,41 @@ export default function Sidebar({ isOpen, onClose }) {
             </button>
           </div>
 
+          {/* Onboarding Notice when account selection is pending */}
+          {!hasSelectedAccount && (
+            <div className="mb-3 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-center gap-2">
+              <Lock className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+              <span>Select an account to unlock navigation</span>
+            </div>
+          )}
+
           {/* Navigation Links */}
           <nav className="space-y-1.5">
             {navItems.map((item) => {
               const Icon = item.icon;
+              const isAccountsPage = item.path === '/accounts' || item.path === '/social-accounts';
+              const isDisabled = !hasSelectedAccount && !isAccountsPage;
+
+              if (isDisabled) {
+                return (
+                  <button
+                    key={item.path}
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    data-disabled="true"
+                    className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-sm text-slate-500 bg-slate-900/30 border border-slate-800/40 cursor-not-allowed opacity-40 select-none text-left"
+                    title="Complete social account selection on Social Accounts to unlock"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon className="w-4 h-4 text-slate-500" />
+                      <span>{item.label}</span>
+                    </div>
+                    <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  </button>
+                );
+              }
+
               return (
                 <NavLink
                   key={item.path}

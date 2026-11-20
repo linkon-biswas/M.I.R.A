@@ -9,6 +9,7 @@ export interface PublishPostInput {
   platforms: TargetPlatform[];
   publishNow?: boolean;
   scheduledFor?: string;
+  scheduledAt?: string;
   timezone?: string;
   idempotencyKey?: string;
 }
@@ -18,6 +19,7 @@ export interface PlatformPublishResult {
   status: 'published' | 'scheduled' | 'failed';
   platformPostId?: string;
   platformPostUrl?: string;
+  accountId?: string;
   error?: string;
 }
 
@@ -31,6 +33,7 @@ export interface NormalizedPublishResult {
 
 export interface PostRecord {
   internalPostId: string;
+  userId?: string;
   providerPostId?: string;
   idempotencyKey: string;
   caption?: string;

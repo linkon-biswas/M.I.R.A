@@ -1,4 +1,4 @@
-﻿import axios, {
+import axios, {
   AxiosInstance,
   AxiosError,
   AxiosRequestConfig,
@@ -402,6 +402,25 @@ export class ZernioClient {
           'Zernio API request failed';
 
         if (
+          status === 400
+        ) {
+          const validationMsg =
+            responseData?.error ||
+            responseData?.message ||
+            'Zernio rejected publishing request (Validation Error).';
+
+          throw new SocialPublishingError(
+            validationMsg,
+            400,
+            {
+              status,
+              providerError:
+                responseData,
+            }
+          );
+        }
+
+        if (
           status === 401
         ) {
           throw new SocialPublishingError(
@@ -418,8 +437,15 @@ export class ZernioClient {
         if (
           status === 409
         ) {
+          const rawDetail =
+            responseData?.error ||
+            responseData?.message;
+          const conflictMsg = rawDetail
+            ? `Publishing request conflict: ${rawDetail}`
+            : 'Publishing request conflict. Idempotency key or duplicate request detected.';
+
           throw new SocialPublishingError(
-            'Publishing request conflict. Idempotency key or duplicate request detected.',
+            conflictMsg,
             409,
             {
               status,
@@ -474,6 +500,351 @@ export class ZernioClient {
       'Maximum retry attempts exceeded for Zernio API call.',
       503
     );
+  }
+
+  public async createProfile(data: { name: string; externalId?: string }): Promise<any> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    try {
+      const response = await this.client.post('/profiles', data, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        'Failed to create Zernio profile';
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+        details: responseData?.details,
+      });
+    }
+  }
+
+  public async getProfiles(params?: { externalId?: string }): Promise<any> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    try {
+      const response = await this.client.get('/profiles', {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        params: {
+          ...(params?.externalId ? { externalId: params.externalId } : {}),
+        },
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        'Failed to fetch Zernio profiles';
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
+  }
+
+  public async getProfile(profileId: string): Promise<any> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    try {
+      const response = await this.client.get(`/profiles/${profileId}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        `Failed to fetch Zernio profile '${profileId}'`;
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
+  }
+
+  public async getConnectUrl(
+    platform: string,
+    params: { profileId: string; redirect_url: string }
+  ): Promise<{ authUrl: string }> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    const normPlatform = (platform || '').toLowerCase().trim();
+    const platformSlug = normPlatform === 'x' ? 'twitter' : normPlatform;
+
+    if (!params?.profileId || typeof params.profileId !== 'string' || !params.profileId.trim()) {
+      throw new SocialPublishingError(
+        'profileId is required to generate connect URL',
+        400
+      );
+    }
+
+    try {
+      const response = await this.client.get(`/connect/${platformSlug}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        params: {
+          profileId: params.profileId,
+          redirect_url: params.redirect_url,
+        },
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        `Failed to get connect URL for ${platform}`;
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
+  }
+
+  public async listAccounts(params?: {
+    profileId?: string;
+    platform?: string;
+  }): Promise<any> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    try {
+      const response = await this.client.get('/accounts', {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        params: {
+          ...(params?.profileId ? { profileId: params.profileId } : {}),
+          ...(params?.platform ? { platform: params.platform } : {}),
+        },
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        'Failed to list Zernio accounts';
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
+  }
+
+  public async deleteAccount(accountId: string): Promise<any> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    if (!accountId || typeof accountId !== 'string' || !accountId.trim()) {
+      throw new SocialPublishingError(
+        'accountId is required to disconnect account',
+        400
+      );
+    }
+
+    try {
+      const response = await this.client.delete(`/accounts/${accountId.trim()}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        `Failed to disconnect Zernio account '${accountId}'`;
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
+  }
+
+  public async getFacebookPostReactions(
+    accountId: string,
+    postId: string
+  ): Promise<any> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    if (!accountId || typeof accountId !== 'string' || !accountId.trim()) {
+      throw new SocialPublishingError('accountId is required to fetch post reactions', 400);
+    }
+
+    if (!postId || typeof postId !== 'string' || !postId.trim()) {
+      throw new SocialPublishingError('postId is required to fetch post reactions', 400);
+    }
+
+    try {
+      const response = await this.client.get(
+        `/accounts/${encodeURIComponent(accountId.trim())}/facebook-post-reactions`,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          params: {
+            postId: postId.trim(),
+          },
+        }
+      );
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        `Failed to fetch Facebook post reactions for post '${postId}'`;
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
+  }
+
+  public async getPostComments(
+    postId: string,
+    accountId: string,
+    cursor?: string,
+    limit: number = 25
+  ): Promise<{ comments: any[]; pagination: { hasMore: boolean; nextCursor: string | null } }> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new SocialPublishingError(
+        'Zernio API key is missing. Check ZERNIO_API_KEY environment variable.',
+        401
+      );
+    }
+
+    if (!postId || typeof postId !== 'string' || !postId.trim()) {
+      throw new SocialPublishingError('postId is required to fetch comments', 400);
+    }
+
+    if (!accountId || typeof accountId !== 'string' || !accountId.trim()) {
+      throw new SocialPublishingError('accountId is required to fetch comments', 400);
+    }
+
+    try {
+      const params: Record<string, any> = {
+        accountId: accountId.trim(),
+        limit,
+      };
+      if (cursor && typeof cursor === 'string' && cursor.trim()) {
+        params.cursor = cursor.trim();
+      }
+
+      const response = await this.client.get(`/inbox/comments/${encodeURIComponent(postId.trim())}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        params,
+      });
+
+      const body = response.data || {};
+      const comments = Array.isArray(body.data)
+        ? body.data
+        : Array.isArray(body.comments)
+          ? body.comments
+          : Array.isArray(body)
+            ? body
+            : [];
+
+      const hasMore = Boolean(body.pagination?.hasMore ?? body.hasMore ?? false);
+      const nextCursor =
+        body.pagination?.nextCursor ||
+        body.pagination?.cursor ||
+        body.nextCursor ||
+        null;
+
+      return {
+        comments,
+        pagination: {
+          hasMore,
+          nextCursor: typeof nextCursor === 'string' ? nextCursor : null,
+        },
+      };
+    } catch (err: any) {
+      const status = err.response?.status;
+      const responseData = err.response?.data;
+      const message =
+        responseData?.message ||
+        responseData?.error ||
+        err.message ||
+        `Failed to fetch comments for post '${postId}'`;
+      throw new SocialPublishingError(message, status || 500, {
+        status,
+        providerError: responseData,
+      });
+    }
   }
 }
 

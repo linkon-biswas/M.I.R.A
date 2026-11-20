@@ -22,7 +22,7 @@ export default function CreatePostPage() {
   const [caption, setCaption] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [platform, setPlatform] = useState('facebook');
-  const [accountId, setAccountId] = useState('6ab3ef6b8d284ffb21357563');
+  const [accountId, setAccountId] = useState('');
   const [publishNow, setPublishNow] = useState(true);
   const [scheduledFor, setScheduledFor] = useState('');
   const [timezone, setTimezone] = useState('Asia/Dhaka');
@@ -30,19 +30,35 @@ export default function CreatePostPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [userAccounts, setUserAccounts] = useState([]);
+
+  React.useEffect(() => {
+    apiService.getAccounts()
+      .then((res) => {
+        const accs = res?.accounts || [];
+        setUserAccounts(accs);
+        const matched = accs.find((a) => (a.platform || '').toLowerCase() === platform.toLowerCase());
+        if (matched) {
+          setAccountId(matched.accountId || matched.id);
+        }
+      })
+      .catch(() => setUserAccounts([]));
+  }, []);
 
   const platformsList = [
-    { id: 'facebook', name: 'Facebook', icon: Facebook, defaultAcc: '6ab3ef6b8d284ffb21357563', color: 'text-blue-500' },
-    { id: 'linkedin', name: 'LinkedIn', icon: Linkedin, defaultAcc: 'li_acc_101', color: 'text-sky-500' },
-    { id: 'instagram', name: 'Instagram', icon: Instagram, defaultAcc: 'ig_acc_202', color: 'text-pink-500' },
-    { id: 'twitter', name: 'X / Twitter', icon: Twitter, defaultAcc: 'tw_acc_303', color: 'text-slate-200' },
+    { id: 'facebook', name: 'Facebook', icon: Facebook, defaultAcc: '', color: 'text-blue-500' },
+    { id: 'linkedin', name: 'LinkedIn', icon: Linkedin, defaultAcc: '', color: 'text-sky-500' },
+    { id: 'instagram', name: 'Instagram', icon: Instagram, defaultAcc: '', color: 'text-pink-500' },
+    { id: 'twitter', name: 'X / Twitter', icon: Twitter, defaultAcc: '', color: 'text-slate-200' },
   ];
 
   const handlePlatformSelect = (selectedId) => {
     setPlatform(selectedId);
-    const target = platformsList.find(p => p.id === selectedId);
-    if (target) {
-      setAccountId(target.defaultAcc);
+    const matched = userAccounts.find((a) => (a.platform || '').toLowerCase() === selectedId.toLowerCase());
+    if (matched) {
+      setAccountId(matched.accountId || matched.id);
+    } else {
+      setAccountId('');
     }
   };
 
@@ -64,6 +80,11 @@ export default function CreatePostPage() {
       return;
     }
 
+    if (!accountId.trim()) {
+      setErrorMessage('Account ID is required. Enter your connected account ID or connect an account in Social Accounts.');
+      return;
+    }
+
     if (imageUrl) {
       try {
         new URL(imageUrl);
@@ -75,17 +96,32 @@ export default function CreatePostPage() {
 
     setSubmitting(true);
 
+    let formattedScheduledFor = undefined;
+    if (!publishNow && scheduledFor) {
+      try {
+        const dateObj = new Date(scheduledFor);
+        if (!isNaN(dateObj.getTime())) {
+          formattedScheduledFor = dateObj.toISOString();
+        } else {
+          formattedScheduledFor = scheduledFor;
+        }
+      } catch (_e) {
+        formattedScheduledFor = scheduledFor;
+      }
+    }
+
     const payload = {
       caption: caption.trim() || undefined,
-      imageUrl: imageUrl.trim() || undefined,
+      imageUrl: imageUrl && imageUrl.trim() ? imageUrl.trim() : undefined,
       platforms: [
         {
           platform,
-          accountId: accountId.trim() || '6ab3ef6b8d284ffb21357563',
+          accountId: accountId.trim(),
         },
       ],
       publishNow,
-      scheduledFor: !publishNow && scheduledFor ? scheduledFor : undefined,
+      scheduledFor: formattedScheduledFor,
+      scheduledAt: formattedScheduledFor,
       timezone: !publishNow ? timezone : undefined,
     };
 
@@ -99,7 +135,12 @@ export default function CreatePostPage() {
         setErrorMessage(response.error || 'Publishing completed with warnings.');
       }
     } catch (err) {
-      const serverErr = err.response?.data?.error || err.message || 'An error occurred while communicating with the Backend server.';
+      const serverErr =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (Array.isArray(err.response?.data?.platforms) && err.response.data.platforms[0]?.error) ||
+        err.message ||
+        'An error occurred while communicating with the Backend server.';
       setErrorMessage(serverErr);
     } finally {
       setSubmitting(false);
@@ -124,11 +165,21 @@ export default function CreatePostPage() {
         <div className="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 space-y-2">
           <div className="flex items-center gap-2 font-semibold text-sm">
             <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-            Post Confirmed by Backend Engine!
+            {result.status === 'scheduled'
+              ? 'Post Successfully Scheduled!'
+              : 'Post Confirmed & Published by Backend Engine!'}
           </div>
           <div className="text-xs space-y-1 text-slate-300 pl-7">
             <p><strong className="text-slate-100">Internal Post ID:</strong> <code className="bg-slate-900 px-2 py-0.5 rounded text-blue-400 font-mono">{result.postId}</code></p>
             <p><strong className="text-slate-100">Status:</strong> <StatusBadge status={result.status} /></p>
+            {result.status === 'scheduled' && (
+              <p>
+                <strong className="text-slate-100">Scheduled Time:</strong>{' '}
+                <span className="text-amber-300 font-mono">
+                  {scheduledFor ? new Date(scheduledFor).toLocaleString() : 'As requested'} ({timezone})
+                </span>
+              </p>
+            )}
             {result.platforms?.[0]?.platformPostUrl && (
               <p>
                 <strong className="text-slate-100">Live Post URL:</strong>{' '}
@@ -199,19 +250,41 @@ export default function CreatePostPage() {
           </div>
         </div>
 
-        {/* Account ID Input */}
+        {/* Account ID Input / Selector */}
         <div>
           <label htmlFor="accountIdInput" className="block text-xs font-medium text-slate-400 mb-1">
             Platform Account ID
           </label>
-          <input
-            id="accountIdInput"
-            type="text"
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            placeholder="Account ID (e.g., 6ab3ef6b8d284ffb21357563)"
-            className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm focus:outline-none focus:border-blue-500 font-mono transition-colors"
-          />
+          {userAccounts.filter((a) => (a.platform || '').toLowerCase() === platform.toLowerCase()).length > 0 ? (
+            <select
+              id="accountIdInput"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm focus:outline-none focus:border-blue-500 font-mono transition-colors"
+            >
+              {userAccounts
+                .filter((a) => (a.platform || '').toLowerCase() === platform.toLowerCase())
+                .map((a) => (
+                  <option key={a.id || a.accountId} value={a.accountId || a.id}>
+                    {a.displayName ? `${a.displayName} (${a.accountId || a.id})` : (a.accountId || a.id)}
+                  </option>
+                ))}
+            </select>
+          ) : (
+            <input
+              id="accountIdInput"
+              type="text"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              placeholder="No connected account found for this platform"
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm focus:outline-none focus:border-blue-500 font-mono transition-colors"
+            />
+          )}
+          <p className="mt-1 text-[11px] text-slate-500">
+            {userAccounts.filter((a) => (a.platform || '').toLowerCase() === platform.toLowerCase()).length > 0
+              ? 'Using your connected account for this platform.'
+              : 'No connected account for this platform. Connect an account in Social Channels.'}
+          </p>
         </div>
 
         {/* Caption / Content Area */}

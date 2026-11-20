@@ -1,6 +1,6 @@
-# AI Marketing SaaS - Social Publishing & Analytics Frontend
+# M.I.R.A - Social Publishing & Analytics Frontend
 
-A modern React-based marketing agency dashboard for social media content publishing and performance analytics, powered by Zernio and PostgreSQL backend persistence.
+A modern React-based marketing agency dashboard for social media content publishing and performance analytics, powered by Zernio API and PostgreSQL backend persistence.
 
 ## Features
 - **Dashboard**: Executive overview of total posts, reach, impressions, engagement rates, and recent activity.
